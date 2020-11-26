@@ -38,7 +38,6 @@ class Element_Uni_4:
         self.etas = []
         self.ksis = []
         self.wages = [] #list of tuples with wage as (x,y)
-        self.N_matrix = np.zeros()
         if npc == 2:
           val = 1/sqrt(3)
           for y in range(npc):
@@ -97,34 +96,31 @@ class Element_Uni_4:
         else:
             raise TypeError("Incorrect number of npcs")
 
+        self.N_array = self._local_func_deriv()[0]
+        self.N_of_ksi = self._local_func_deriv()[1]
+        self.N_of_eta = self._local_func_deriv()[2]
 
-        self.N_of_eta = self._get_deriv_for_each_point()["N_of_eta"]
-        self.N_of_ksi = self._get_deriv_for_each_point()["N_of_ksi"]
 
-    def _get_deriv_for_each_point(self):
+    def _local_func_deriv(self):
         etas = self.etas
         ksis = self.ksis
-        result_dict = {}
-        result = None
+        dim = pow(self.npc, 2)
 
-        for eta in etas:
-            if result is None:
-                result = np.array([-1/4 * (1-eta), 1/4*(1-eta), 1/4*(1+eta), -1/4*(1+eta)])
-            else:
-                #adding row to result array
-                result = np.vstack((result, [-1/4 * (1-eta), 1/4*(1-eta), 1/4*(1+eta), -1/4*(1+eta)]))
-        result_dict["N_of_ksi"] = result
-        result = None
+        arr_dN_dKsi = np.empty((dim, 4))
+        arr_dN_dEta = np.empty((dim,4))
+        arr_N_func = np.empty((dim, 4))
 
-        for ksi in ksis:
-            if result is None:
-                result = np.array([-1/4*(1-ksi), -1/4*(1+ksi), 1/4*(1+ksi), 1/4*(1-ksi)])
-            else:
-                #adding row to result array
-                result = np.vstack((result, [-1/4*(1-ksi), -1/4*(1+ksi), 1/4*(1+ksi), 1/4*(1-ksi)]))
-        result_dict["N_of_eta"] = result
-        return result_dict
-        
+        for j in range(dim):
+            arr_N_func[j][0] = 1/4 * (1-ksis[j]) * (1-etas[j])
+            arr_N_func[j][1] = 1/4 * (1+ksis[j]) * (1-etas[j])
+            arr_N_func[j][2] = 1/4 * (1+ksis[j]) * (1-etas[j])
+            arr_N_func[j][3] = 1/4 * (1-ksis[j]) * (1-etas[j])
+
+            arr_dN_dKsi[j] = np.array( [ -1/4 * (1-etas[j]),  1/4 * (1-etas[j]), 1/4 * (1+etas[j]), -1/4 * (1+etas[j]) ] )
+            arr_dN_dEta[j] = np.array( [ -1/4 * (1-ksis[j]), -1/4 * (1+ksis[j]), 1/4 * (1+ksis[j]),  1/4 * (1-ksis[j]) ] )
+
+        return (arr_N_func, arr_dN_dKsi, arr_dN_dEta)
+
 
     def _get_jacobi(self, id, Nodes):
         id = id - 1
