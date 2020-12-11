@@ -3,12 +3,55 @@
 from math import sqrt
 import numpy as np
 
+
+#GlobalData def
+class GlobalData:
+    def __init__(self, path):
+        data = self.__get_data__(path)
+        if(data == None):
+            raise Exception("Incorrect file")
+        else:
+            self._data_path = path
+            self.H = data['H']
+            self.W = data['W']
+            self.nH = int(data['nH'])
+            self.nW = int(data['nW'])
+            self.k = int(data['k'])
+            self.c = int(data['c'])
+            self.ro = int(data['ro'])
+            self.to = int(data['to'])
+            self.t0 = int(data['t0'])
+            self.alfa = int(data['alfa'])
+
+            self.npc = int(data['npc'])
+            self.nE = (self.nH - 1)  * (self.nW - 1)
+            self.nN = self.nH * self.nW
+
+    def __get_data__(self, path):
+        with open(path, "rt") as file:
+            data = {}
+            lines = file.readlines()
+            for line in lines:
+                key, value = line.split()
+                data[key] = float(value)
+            return data
+        return None
+
+    def __repr__(self):
+        return "{1!s}(path={2!r})".format(self.__class__.__name__, self._data_path)
+
+
+
+
+
 #Node def
 class Node:
-    def __init__(self, x, y, t0):
+    def __init__(self, x, y, t0, flag_bc=0):
         self.x = x
         self.y = y
         self.t0 = t0
+        # flag to indicate whether boundary condition is applied to node
+        self.flag_bc = flag_bc
 
     def __str__(self):
         return f"{self.x}, {self.y}"
@@ -16,20 +59,64 @@ class Node:
     def __repr__(self):
         return "{0!s}(x={1!r}, y={2!r})".format(self.__class__.__name__, self.x, self.y)
 
+
+
+
+
 #Elements def
 class Element:
+    """IDs must be indexed in counter-clock manner"""
     def __init__(self, *args):
-        self.ids = args
+        self.nodes_ids = args
 
     def __str__(self):
-        return f"{self.ids}"
+        return f"{self.nodes_ids}"
 
     def __repr__(self):
-        return"{0!s}(*args={1!r}".format(self.__class__.__name__, self.ids)
+        return"{0!s}(*args={1!r}".format(self.__class__.__name__, self.nodes_ids)
 
 
 
+class SOE:
+    def __init__(self, H, C):
+        self.H = H
+        self.C = C
 
+
+class Surface_Uni:
+    """pc1, pc2 - tuple, [0] -> ksi, [1] -> eta"""
+    def __init__(self, pc1: tuple, pc2: tuple, w1, w2):
+        self.w1 = w1
+        self.w2 = w2
+        self.N_of_pc1 = self._get_N_in_pc(pc1)
+        self.N_of_pc2 = self._get_N_in_pc(pc2)
+
+    def _get_N_in_pc(self, pc):
+        """returns tuple of 1x4 vector with values of N functions for each pc"""
+        arr_N_func = np.zeros((1, 4))
+        arr_N_func[0][0] = 1 / 4 * (1 - pc[0]) * (1 - pc[1])
+        arr_N_func[0][1] = 1 / 4 * (1 + pc[0]) * (1 - pc[1])
+        arr_N_func[0][2] = 1 / 4 * (1 + pc[0]) * (1 + pc[1])
+        arr_N_func[0][3] = 1 / 4 * (1 - pc[0]) * (1 + pc[1])
+        return arr_N_func
+
+    def _get_det_J(self, node1: Node, node2: Node):
+        L = sqrt(pow(node1.x - node2.x, 2) + pow(node1.y - node2.y, 2))
+        return L / 2
+
+    def get_H_BC_local(self, node1: Node, node2: Node, alfa):
+        detJ = self._get_det_J(node1, node2)
+        H_BC_local = np.zeros((4, 4))
+        H_BC_local = alfa * (((np.matmul(self.N_of_pc1.transpose(), self.N_of_pc1) * self.w1) +
+                (np.matmul(self.N_of_pc2.transpose(), self.N_of_pc2) * self.w2)) *
+                detJ)
+        return H_BC_local
+
+    def get_P_local(self, node1: Node, node2: Node, alfa, to):
+        detJ = self._get_det_J(node1, node2)
+        P = np.zeros((4,4))
+        P = -alfa * to * (self.N_of_pc1.transpose() * self.w1 + self.N_of_pc2.transpose() * self.w2) * detJ
+        return P
 
 
 class Element_Uni_4:
@@ -92,13 +179,18 @@ class Element_Uni_4:
                     self.etas.append(y_val)
                     self.wages.append((x_wage, y_wage))
 
-
         else:
             raise TypeError("Incorrect number of npcs")
 
         self.N_array = self._local_func_deriv()[0]
         self.N_of_ksi = self._local_func_deriv()[1]
         self.N_of_eta = self._local_func_deriv()[2]
+
+        val = 1/sqrt(3)
+        self.surf_bottom_uni = Surface_Uni((-val, -1), (val, -1), 1, 1)
+        self.surf_right_uni = Surface_Uni((1, -val), (1, val), 1, 1)
+        self.surf_top_uni = Surface_Uni((-val, 1), (val, 1), 1, 1)
+        self.surf_left_uni = Surface_Uni((-1, -val), (-1, val), 1, 1)
 
 
     def _local_func_deriv(self):
@@ -113,8 +205,8 @@ class Element_Uni_4:
         for j in range(dim):
             arr_N_func[j][0] = 1/4 * (1-ksis[j]) * (1-etas[j])
             arr_N_func[j][1] = 1/4 * (1+ksis[j]) * (1-etas[j])
-            arr_N_func[j][2] = 1/4 * (1+ksis[j]) * (1-etas[j])
-            arr_N_func[j][3] = 1/4 * (1-ksis[j]) * (1-etas[j])
+            arr_N_func[j][2] = 1/4 * (1+ksis[j]) * (1+etas[j])
+            arr_N_func[j][3] = 1/4 * (1-ksis[j]) * (1+etas[j])
 
             arr_dN_dKsi[j] = np.array( [ -1/4 * (1-etas[j]),  1/4 * (1-etas[j]), 1/4 * (1+etas[j]), -1/4 * (1+etas[j]) ] )
             arr_dN_dEta[j] = np.array( [ -1/4 * (1-ksis[j]), -1/4 * (1+ksis[j]), 1/4 * (1+ksis[j]),  1/4 * (1-ksis[j]) ] )
@@ -124,144 +216,86 @@ class Element_Uni_4:
 
     def _get_jacobi(self, id, Nodes):
         id = id - 1
-        row_1 = []
-        row_2 = []
-        sumx = 0
-        sumy = 0
-        #i for Ni; id for row in matrix
+        jacobi = np.zeros((2,2))
         for i in range(4):
-            sumx += self.N_of_ksi[id][i] * Nodes[i].x
-            sumy += self.N_of_ksi[id][i] * Nodes[i].y
-        row_1.extend([sumx, sumy])
+            jacobi[0][0] += self.N_of_ksi[id][i] * Nodes[i].x
+            jacobi[0][1] += self.N_of_ksi[id][i] * Nodes[i].y
 
-        sumx = 0
-        sumy = 0
+            jacobi[1][0] += self.N_of_eta[id][i] * Nodes[i].x
+            jacobi[1][1] += self.N_of_eta[id][i] * Nodes[i].y
+
+        return jacobi
+
+
+    def get_H_C_matrix_for_point(self, Nodes, id, k, c, ro):
+        jacobi = self._get_jacobi(id, Nodes)
+        jacobi_inverse = np.linalg.inv(jacobi) #inv has 1/detJ in its def, hence no need to additionaly do this later
+        jacobi_det = np.linalg.det(jacobi)
+
+        dN_dX = np.zeros((1,4))
+        dN_dY = np.zeros((1,4))
+        N_array = np.zeros((1,4))
+
         for i in range(4):
-            sumx += self.N_of_eta[id][i] * Nodes[i].x
-            sumy += self.N_of_eta[id][i] * Nodes[i].y
-        row_2.extend([sumx, sumy])
-        return np.array([row_1, row_2])
+            mat_temp = np.array([[self.N_of_ksi[id-1][i]],
+                                 [self.N_of_eta[id-1][i]]])
+            mat_temp = np.matmul(jacobi_inverse, mat_temp)
+            dN_dX[0][i] = mat_temp[0]
+            dN_dY[0][i] = mat_temp[1]
+
+        #H matrix aggregation
+        dN_dX_t = dN_dX.transpose()
+        dN_dY_t = dN_dY.transpose()
+        H = k * jacobi_det * (np.matmul(dN_dX_t, dN_dX ) + np.matmul(dN_dY_t, dN_dY)) *\
+            self.wages[id-1][0] * self.wages[id-1][1]
+
+        #C matrix aggregation
+        N_array[0] = self.N_array[id - 1]
+        N_array_t = N_array.transpose()
+        C = c * jacobi_det * ro * (np.matmul(N_array_t, N_array)) * self.wages[id-1][0]  *  self.wages[id-1][1]
 
 
-    #calculating {dN/dx}*{dN/dx}T and {dN/dy}*{dN/dy}T and return both as tuples
-    def _get_x_y_vertice(self, id, Nodes):
-        x_vertice = []
-        y_verice = []
-        for i in range(4):
-            j = self._get_jacobi(id, Nodes)
-            jI = np.linalg.inv(j)
-            m_x_y = np.array( [ [self.N_of_ksi[id-1][i]] ,
-                                [self.N_of_eta[id-1][i]] ] )
-            m = np.matmul(jI, m_x_y)
-            x_vertice.append(m[0].item(0))
-            y_verice.append(m[1].item(0))
-        return((x_vertice,y_verice))    
-
-
-    #TODO: implement built-in transfrom matrixs
-    def get_H_matrix_for_point(self, Nodes, id, k, c, ro):
-
-        x_y = self._get_x_y_vertice(id, Nodes)
-        x_mat =  [ x_y[0] ]  
-        y_mat =  [ x_y[1] ]
-
-        xc_mat = [ self.N_of_ksi[id-1].tolist() ]
-        yc_mat = [ self.N_of_eta[id-1].tolist() ]
-
-        x_mat_trans = []
-        y_mat_trans = []
-
-        xc_mat_trans = []
-        yc_mat_trans = []
-
-        #iterating over to fill trans matrix
-        for x_arr in x_mat:
-            for x in x_arr:
-                x_mat_trans.append([x])
-
-        for y_arr in y_mat:
-            for y in y_arr:
-                y_mat_trans.append([y])
-
-        for xc_arr in xc_mat:
-            for xc in xc_arr:
-                xc_mat_trans.append([xc])
-        for yc_arr in yc_mat:
-            for yc in yc_arr:
-                yc_mat_trans.append([yc])
-
-        det = np.linalg.det(self._get_jacobi(id, Nodes))
-
-        x_result = np.array(np.matmul(x_mat_trans, x_mat))
-        y_result = np.array(np.matmul(y_mat_trans, y_mat))
-
-        xc_result = np.array(np.matmul(xc_mat_trans, xc_mat))
-        yc_result = np.array(np.matmul(yc_mat_trans, yc_mat))
-        #doesnt work - why?
-        #H = k*(x_result * self.wages[id-1][0] + y_result * self.wages[id-1][1]) * det
-        H = k*(x_result + y_result) * det * self.wages[id-1][0] * self.wages[id-1][1]
-        C = c*ro*(xc_result + yc_result) * det * self.wages[id-1][0] * self.wages[id-1][1]
         return (H,C)
 
-    def get_H_matrix(self, Nodes, k, c, ro):
-        #adding 1 as normallny range = for(i=0;i<x), here I need for(i=1;i<=x)
+    def get_H_C_matrix(self, Nodes, globalData: GlobalData):
+        #TODO: checking if Nodes are provided in counter clock manner (if possible)
+        k = globalData.k
+        c = globalData.c
+        ro = globalData.ro
+        alfa = globalData.alfa
+        to = globalData.to
 
-        sumH = self.get_H_matrix_for_point(Nodes, 1, k, c, ro)[0]
-        sumC = self.get_H_matrix_for_point(Nodes, 1, k, c, ro)[1]
+        sumH = self.get_H_C_matrix_for_point(Nodes, 1, k, c, ro)[0]
+        sumC = self.get_H_C_matrix_for_point(Nodes, 1, k, c, ro)[1]
 
         for i in range(2, pow(self.npc,2)+1):
-            sumH += self.get_H_matrix_for_point(Nodes, i, k, c, ro)[0]
-            sumC += self.get_H_matrix_for_point(Nodes, i, k, c, ro)[1]
+            sumH += self.get_H_C_matrix_for_point(Nodes, i, k, c, ro)[0]
+            sumC += self.get_H_C_matrix_for_point(Nodes, i, k, c, ro)[1]
 
-        if False:
-            H1 = self.get_H_matrix_for_point(Nodes, 1, k)
-            H2 = self.get_H_matrix_for_point(Nodes, 2, k)
-            H3 = self.get_H_matrix_for_point(Nodes, 3, k)
-            H4 = self.get_H_matrix_for_point(Nodes, 4, k)
+        #Hbc matrix
+        Hbc = np.zeros((4,4))
+        if Nodes[0].flag_bc != 0 and Nodes[1].flag_bc != 0:
+            Hbc += self.surf_bottom_uni.get_H_BC_local(Nodes[0], Nodes[1], alfa)
 
-        with open("sum_H.txt", "a") as a_file:
+        if Nodes[1].flag_bc != 0 and Nodes[2].flag_bc != 0:
+            Hbc += self.surf_right_uni.get_H_BC_local(Nodes[1], Nodes[2], alfa)
+
+        if Nodes[2].flag_bc != 0 and Nodes[3].flag_bc != 0:
+            Hbc += self.surf_top_uni.get_H_BC_local(Nodes[2], Nodes[3], alfa)
+
+        if Nodes[3].flag_bc != 0 and Nodes[0].flag_bc != 0:
+            Hbc += self.surf_left_uni.get_H_BC_local(Nodes[3], Nodes[0], alfa)
+
+
+        with open(rf"D:\DevProjects\PythonProjects\MES\data\results\local\sum_H.txt", "w") as a_file:
             np.savetxt(a_file, sumH, fmt='%.4f')
             a_file.write("\n")
 
-        with open("sum_C.txt", "a") as a_file:
+        with open(rf"D:\DevProjects\PythonProjects\MES\data\results\local\sum_C.txt", "w") as a_file:
             np.savetxt(a_file, sumC, fmt='%.4f')
             a_file.write("\n")
 
         return (sumH, sumC)
-    
-#GlobalData def
-class GlobalData:
-    def __init__(self, path):
-        data = self.__get_data__(path)
-        if(data == None):
-            raise Exception("Incorrect file")
-        else:
-            self._data_path = path
-            self.H = data['H']
-            self.W = data['W']
-            self.nH = int(data['nH'])
-            self.nW = int(data['nW'])
-            self.k = int(data['k'])
-            self.c = int(data['c'])
-            self.ro = int(data['ro'])
-            self.t0 = int(data['t0'])
-
-            self.npc = int(data['npc'])
-            self.nE = (self.nH - 1)  * (self.nW - 1)
-            self.nN = self.nH * self.nW
-
-    def __get_data__(self, path):
-        with open(path, "rt") as file:
-            data = {}
-            lines = file.readlines()
-            for line in lines:
-                key, value = line.split()
-                data[key] = float(value)
-            return data
-        return None
-
-    def __repr__(self):
-        return "{1!s}(path={2!r})".format(self.__class__.__name__, self._data_path)
 
 
 #Siatka
@@ -282,9 +316,16 @@ class Siatka:
                 pos += 1
         return nodes
 
+    def set_bound_cond(self, indexes):
+        for key, value in self.Nodes.items():
+            if key in outside:
+                value.flag_bc = 1
+
+
+
     def list_nodes(self):
         for key, value in self.Nodes.items():
-            print(f"{key}: {value}")
+            print(f"{key}: {value}, {value.flag_bc}")
 
     def _fill_elements(self):
         elements = {}
@@ -300,35 +341,28 @@ class Siatka:
         for key, value in self.Elements.items():
             print(f"{key}: {value}")
 
-    def fill_H_global(self):
+    def fill_H_C_global(self):
         el = Element_Uni_4(self.GlobalData.npc)
         H_Global = np.zeros(( len(self.Nodes), len(self.Nodes)))
         C_Global = np.zeros((len(self.Nodes), len(self.Nodes)))
         for i in range(1, self.GlobalData.nE + 1):
             Nodes = []
-            for value in self.Elements[i].ids:
+            for value in self.Elements[i].nodes_ids:
                 Nodes.append(self.Nodes[value])
-            H = el.get_H_matrix(Nodes, self.GlobalData.k, self.GlobalData.c, self.GlobalData.ro)[0]
-            C = el.get_H_matrix(Nodes, self.GlobalData.k, self.GlobalData.c, self.GlobalData.ro)[1]
-            for n in range(0, len(self.Elements[i].ids)):
-                for m in range(0, len(self.Elements[i].ids)):
-                    H_Global.itemset((self.Elements[i].ids[n]-1,
-                                    self.Elements[i].ids[m]-1),
-                                    H_Global.item(self.Elements[i].ids[n]-1,  self.Elements[i].ids[m]-1) +
-                                    H.item(n,m))
-                    C_Global.itemset((self.Elements[i].ids[n] - 1,
-                                      self.Elements[i].ids[m] - 1),
-                                     C_Global.item(self.Elements[i].ids[n] - 1, self.Elements[i].ids[m] - 1) +
+            H = el.get_H_C_matrix(Nodes, self.GlobalData)[0]
+            C = el.get_H_C_matrix(Nodes, self.GlobalData)[1]
+            for n in range(0, len(self.Elements[i].nodes_ids)):
+                for m in range(0, len(self.Elements[i].nodes_ids)):
+                    H_Global.itemset((self.Elements[i].nodes_ids[n] - 1,
+                                      self.Elements[i].nodes_ids[m] - 1),
+                                     H_Global.item(self.Elements[i].nodes_ids[n] - 1, self.Elements[i].nodes_ids[m] - 1) +
+                                     H.item(n,m))
+                    C_Global.itemset((self.Elements[i].nodes_ids[n] - 1,
+                                      self.Elements[i].nodes_ids[m] - 1),
+                                     C_Global.item(self.Elements[i].nodes_ids[n] - 1, self.Elements[i].nodes_ids[m] - 1) +
                                      C.item(n, m))
         return (H_Global, C_Global)
 
-if False:
-    Nodes = [Node(0,0), Node(4,0), Node(4,6), Node(0,6)]
-    nodes = [Node(0,0), Node(4,0), Node(4,4), Node(0,5)]
-    el = Element_Uni_4()
-    m = el._get_jacobi(1, Nodes)
-    v = el._get_x_y_vertice(1, Nodes)
-    h = el.get_H_matrix(Nodes, k=30)
 
 ####
 
@@ -350,12 +384,19 @@ if __name__ == "__main__":
     if True:
         path = "D:\\DevProjects\\PythonProjects\\MES\\data\\global_data.txt"
         s1 = Siatka(path)
+        outside = [1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16]
+        s1.set_bound_cond(outside)
+        s1.list_nodes()
+        val = 1/sqrt(3)
+        #powierzchnia = Surface_Uni((-1, -val), (-1, val), 1, 1 )
+        #print(powierzchnia.get_H_BC_local(s1.Nodes[1], s1.Nodes[2], 25))
+        #print(powierzchnia.get_P_local(s1.Nodes[1], s1.Nodes[2], 25, 1200))
         from pprint import pprint as pp
         #pp(s1.fill_H_global())
         with open(rf"D:\DevProjects\PythonProjects\MES\data\results\h_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-            np.savetxt(a_file, s1.fill_H_global()[0], fmt='%.4f')
+            np.savetxt(a_file, s1.fill_H_C_global()[0], fmt='%.4f')
 
         with open(rf"D:\DevProjects\PythonProjects\MES\data\results\c_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-            np.savetxt(a_file, s1.fill_H_global()[1], fmt='%.4f')
+            np.savetxt(a_file, s1.fill_H_C_global()[1], fmt='%.4f')
             #s1.fill_H_global()
 
