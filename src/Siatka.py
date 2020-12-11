@@ -106,7 +106,6 @@ class Surface_Uni:
 
     def get_H_BC_local(self, node1: Node, node2: Node, alfa):
         detJ = self._get_det_J(node1, node2)
-        H_BC_local = np.zeros((4, 4))
         H_BC_local = alfa * (((np.matmul(self.N_of_pc1.transpose(), self.N_of_pc1) * self.w1) +
                 (np.matmul(self.N_of_pc2.transpose(), self.N_of_pc2) * self.w2)) *
                 detJ)
@@ -114,9 +113,8 @@ class Surface_Uni:
 
     def get_P_local(self, node1: Node, node2: Node, alfa, to):
         detJ = self._get_det_J(node1, node2)
-        P = np.zeros((4,4))
         P = -alfa * to * (self.N_of_pc1.transpose() * self.w1 + self.N_of_pc2.transpose() * self.w2) * detJ
-        return P
+        return P.transpose()
 
 
 class Element_Uni_4:
@@ -276,6 +274,7 @@ class Element_Uni_4:
         Hbc = np.zeros((4,4))
         if Nodes[0].flag_bc != 0 and Nodes[1].flag_bc != 0:
             Hbc += self.surf_bottom_uni.get_H_BC_local(Nodes[0], Nodes[1], alfa)
+            P = self.surf_bottom_uni.get_P_local(Nodes[0], Nodes[1], alfa, globalData.to)
 
         if Nodes[1].flag_bc != 0 and Nodes[2].flag_bc != 0:
             Hbc += self.surf_right_uni.get_H_BC_local(Nodes[1], Nodes[2], alfa)
@@ -286,6 +285,7 @@ class Element_Uni_4:
         if Nodes[3].flag_bc != 0 and Nodes[0].flag_bc != 0:
             Hbc += self.surf_left_uni.get_H_BC_local(Nodes[3], Nodes[0], alfa)
 
+        sumH += Hbc
 
         with open(rf"D:\DevProjects\PythonProjects\MES\data\results\local\sum_H.txt", "w") as a_file:
             np.savetxt(a_file, sumH, fmt='%.4f')
