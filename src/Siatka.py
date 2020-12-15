@@ -12,16 +12,18 @@ class GlobalData:
             raise Exception("Incorrect file")
         else:
             self._data_path = path
-            self.H = data['H']
-            self.W = data['W']
+            self.H = float(data['H'])
+            self.W = float(data['W'])
             self.nH = int(data['nH'])
             self.nW = int(data['nW'])
-            self.k = int(data['k'])
-            self.c = int(data['c'])
-            self.ro = int(data['ro'])
-            self.to = int(data['to'])
-            self.t0 = int(data['t0'])
+            self.k = float(data['k'])
+            self.c = float(data['c'])
+            self.ro = float(data['ro'])
+            self.to = float(data['to'])
+            self.t0 = float(data['t0'])
             self.alfa = int(data['alfa'])
+            self.dt = float(data['dt'])
+            self.tk = float(data['tk'])
 
             self.npc = int(data['npc'])
             self.nE = (self.nH - 1)  * (self.nW - 1)
@@ -78,9 +80,11 @@ class Element:
 
 
 class SOE:
-    def __init__(self, H, C):
+    def __init__(self, H, C, P):
         self.H = H
         self.C = C
+        self.P = P
+        self.H_calc = None
 
 
 class Surface_Uni:
@@ -88,6 +92,11 @@ class Surface_Uni:
     def __init__(self, pc1: tuple, pc2: tuple, w1, w2):
         self.w1 = w1
         self.w2 = w2
+        self.w = [w1, w2]
+        self.pc = [pc1, pc2]
+        self.N_of_pc = np.zeros((2,4))
+        for i in range(len(self.pc)):
+            self.N_of_pc[i] = self._get_N_in_pc(self.pc[i])
         self.N_of_pc1 = self._get_N_in_pc(pc1)
         self.N_of_pc2 = self._get_N_in_pc(pc2)
 
@@ -106,14 +115,19 @@ class Surface_Uni:
 
     def get_H_BC_local(self, node1: Node, node2: Node, alfa):
         detJ = self._get_det_J(node1, node2)
-        H_BC_local = alfa * (((np.matmul(self.N_of_pc1.transpose(), self.N_of_pc1) * self.w1) +
-                (np.matmul(self.N_of_pc2.transpose(), self.N_of_pc2) * self.w2)) *
-                detJ)
+        H_BC_local = np.zeros((4,4))
+        for i in range(self.N_of_pc.shape[0]):
+            H_BC_local += np.matmul(self.N_of_pc.transpose()[:, i : i+1], self.N_of_pc[i : i+1 , :]) * self.w[i]
+        H_BC_local = alfa * (H_BC_local * detJ)
         return H_BC_local
 
     def get_P_local(self, node1: Node, node2: Node, alfa, to):
         detJ = self._get_det_J(node1, node2)
-        P = -alfa * to * (self.N_of_pc1.transpose() * self.w1 + self.N_of_pc2.transpose() * self.w2) * detJ
+        P = np.zeros((4,1))
+        #self.N_of_pc.shape[0] is no. of rows what is equal to no. of npc
+        for i in range(self.N_of_pc.shape[0]):
+            P += self.N_of_pc.transpose()[:, i:i+1] * self.w[i]
+        P = P * -alfa * to * detJ
         return P.transpose()
 
 
@@ -270,20 +284,26 @@ class Element_Uni_4:
             sumH += self.get_H_C_matrix_for_point(Nodes, i, k, c, ro)[0]
             sumC += self.get_H_C_matrix_for_point(Nodes, i, k, c, ro)[1]
 
-        #Hbc matrix
+        #Hbc matrix, P vertice
         Hbc = np.zeros((4,4))
+        P = np.zeros((1,4))
+
         if Nodes[0].flag_bc != 0 and Nodes[1].flag_bc != 0:
             Hbc += self.surf_bottom_uni.get_H_BC_local(Nodes[0], Nodes[1], alfa)
-            P = self.surf_bottom_uni.get_P_local(Nodes[0], Nodes[1], alfa, globalData.to)
+            P += self.surf_bottom_uni.get_P_local(Nodes[0], Nodes[1], alfa, to)
 
         if Nodes[1].flag_bc != 0 and Nodes[2].flag_bc != 0:
             Hbc += self.surf_right_uni.get_H_BC_local(Nodes[1], Nodes[2], alfa)
+            P += self.surf_right_uni.get_P_local(Nodes[1], Nodes[2], alfa, to)
+
 
         if Nodes[2].flag_bc != 0 and Nodes[3].flag_bc != 0:
             Hbc += self.surf_top_uni.get_H_BC_local(Nodes[2], Nodes[3], alfa)
+            P += self.surf_top_uni.get_P_local(Nodes[2], Nodes[3], alfa, to)
 
         if Nodes[3].flag_bc != 0 and Nodes[0].flag_bc != 0:
             Hbc += self.surf_left_uni.get_H_BC_local(Nodes[3], Nodes[0], alfa)
+            P += self.surf_left_uni.get_P_local(Nodes[3], Nodes[0], alfa, to)
 
         sumH += Hbc
 
@@ -295,11 +315,12 @@ class Element_Uni_4:
             np.savetxt(a_file, sumC, fmt='%.4f')
             a_file.write("\n")
 
-        return (sumH, sumC)
+        return (sumH, sumC, P)
 
 
 #Siatka
 class Siatka:
+    iter_to_print = 0
     def __init__(self, path_to_data):
         self.GlobalData = GlobalData(path_to_data)
         self.Elements = self._fill_elements()
@@ -316,7 +337,26 @@ class Siatka:
                 pos += 1
         return nodes
 
-    def set_bound_cond(self, indexes):
+    def set_bound_cond(self):
+        nH, nW = self.GlobalData.nH, self.GlobalData.nW
+        outside = set()
+        l_b = 1  # left bottom id
+        l_t = 1 + nH - 1  # left top id
+        r_b = 1 + nW * (nH - 1)  # left bottom id
+        r_t = r_b + nH - 1  # left top id
+
+        for i in range(l_b, l_t + 1):
+            outside.add(i)
+
+        for i in range(l_b, r_b + 1, nW):
+            outside.add(i)
+
+        for i in range(r_b, r_t + 1):
+            outside.add(i)
+
+        for i in range(l_t, r_t + 1, nW):
+            outside.add(i)
+
         for key, value in self.Nodes.items():
             if key in outside:
                 value.flag_bc = 1
@@ -345,23 +385,67 @@ class Siatka:
         el = Element_Uni_4(self.GlobalData.npc)
         H_Global = np.zeros(( len(self.Nodes), len(self.Nodes)))
         C_Global = np.zeros((len(self.Nodes), len(self.Nodes)))
+        P_Global = np.zeros((1, len(self.Nodes)))
+
         for i in range(1, self.GlobalData.nE + 1):
             Nodes = []
             for value in self.Elements[i].nodes_ids:
                 Nodes.append(self.Nodes[value])
             H = el.get_H_C_matrix(Nodes, self.GlobalData)[0]
             C = el.get_H_C_matrix(Nodes, self.GlobalData)[1]
+            P = el.get_H_C_matrix(Nodes, self.GlobalData)[2]
             for n in range(0, len(self.Elements[i].nodes_ids)):
+                P_Global.itemset((0, self.Elements[i].nodes_ids[n] - 1),
+                                 P_Global.item(0, self.Elements[i].nodes_ids[n] - 1) +
+                                 P.item(0, n))
                 for m in range(0, len(self.Elements[i].nodes_ids)):
-                    H_Global.itemset((self.Elements[i].nodes_ids[n] - 1,
+                    H_Global.itemset( (self.Elements[i].nodes_ids[n] - 1,
                                       self.Elements[i].nodes_ids[m] - 1),
                                      H_Global.item(self.Elements[i].nodes_ids[n] - 1, self.Elements[i].nodes_ids[m] - 1) +
                                      H.item(n,m))
-                    C_Global.itemset((self.Elements[i].nodes_ids[n] - 1,
+                    C_Global.itemset( (self.Elements[i].nodes_ids[n] - 1,
                                       self.Elements[i].nodes_ids[m] - 1),
                                      C_Global.item(self.Elements[i].nodes_ids[n] - 1, self.Elements[i].nodes_ids[m] - 1) +
                                      C.item(n, m))
-        return (H_Global, C_Global)
+
+        #for i in range(1, len(self.Nodes) + 1):
+        #    t0_ver.itemset((0,i-1), self.Nodes[i].t0)
+
+        self.soe = SOE(H_Global, C_Global, P_Global)
+
+    def _calculate_H_P(self, t_ver):
+        dt = self.GlobalData.dt
+        P_Global = self.soe.P
+        C_Global = self.soe.C
+
+        if self.soe.H_calc is None:
+            self.soe.H_calc = self.soe.H + (C_Global / dt)
+        H_Global = self.soe.H_calc
+
+        #t0 pierwsze w matmul poniewaz wektor wierszowy nie kolumnowy
+        P_Global = -1 * (-1 * np.matmul(t_ver, (C_Global / dt)) + P_Global)
+
+        return(H_Global, P_Global)
+
+    def calculate_t(self, t_ver):
+        H, P = self._calculate_H_P(t_ver)
+        t1 = np.linalg.solve(H, P.transpose())
+        return t1
+
+
+    def simulate(self):
+        t0_ver = np.zeros((1, len(self.Nodes)))
+        for i in range(1, len(self.Nodes) + 1):
+            t0_ver.itemset((0, i - 1), self.Nodes[i].t0)
+        n = int(self.GlobalData.tk / self.GlobalData.dt)
+
+        open(rf"D:\DevProjects\PythonProjects\MES\data\results\simulation\min_max.txt", mode="w").close()
+        with(open(rf"D:\DevProjects\PythonProjects\MES\data\results\simulation\min_max.txt", mode="a")) as file:
+            file.write("t, min, max\n")
+            for i in range (1, n+1):
+                t1_ver = self.calculate_t(t0_ver)
+                t0_ver = t1_ver.transpose()
+                file.write("{}:  {:.4f}, {:.4f}\n".format(i, np.min(t0_ver), np.max(t0_ver)))
 
 
 ####
@@ -384,19 +468,26 @@ if __name__ == "__main__":
     if True:
         path = "D:\\DevProjects\\PythonProjects\\MES\\data\\global_data.txt"
         s1 = Siatka(path)
-        outside = [1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16]
-        s1.set_bound_cond(outside)
-        s1.list_nodes()
+        #outside = [1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16]
+        s1.set_bound_cond()
+        #s1.list_nodes()
         val = 1/sqrt(3)
+        s1.fill_H_C_global()
+        s1.simulate()
         #powierzchnia = Surface_Uni((-1, -val), (-1, val), 1, 1 )
         #print(powierzchnia.get_H_BC_local(s1.Nodes[1], s1.Nodes[2], 25))
         #print(powierzchnia.get_P_local(s1.Nodes[1], s1.Nodes[2], 25, 1200))
         from pprint import pprint as pp
         #pp(s1.fill_H_global())
-        with open(rf"D:\DevProjects\PythonProjects\MES\data\results\h_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-            np.savetxt(a_file, s1.fill_H_C_global()[0], fmt='%.4f')
+        if False:
+            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\h_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
+                np.savetxt(a_file, s1.fill_H_C_global()[0], fmt='%.4f')
 
-        with open(rf"D:\DevProjects\PythonProjects\MES\data\results\c_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-            np.savetxt(a_file, s1.fill_H_C_global()[1], fmt='%.4f')
-            #s1.fill_H_global()
+            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\c_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
+                np.savetxt(a_file, s1.fill_H_C_global()[1], fmt='%.4f')
+                #s1.fill_H_global()
+
+            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\p_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
+                np.savetxt(a_file, s1.fill_H_C_global()[2], fmt='%.4f')
+                #s1.fill_H_global()
 
