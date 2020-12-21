@@ -1,9 +1,13 @@
 H 0.1
 W 0.1
-nH 4
-nW 4
-npc 4
+nH 31
+nW 31
+npc 2
 k 25
 c 700
 ro 7800
 t0 100
+to 1200
+alfa 300
+dt 1
+tk 100
