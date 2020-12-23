@@ -1,6 +1,5 @@
-#TODO: sprawdzic dlaczego Siatka generuje niepoprawne wyniki dla nH != nW
-
 from math import sqrt
+from matplotlib import pyplot as plt
 import numpy as np
 
 from src.Element_uni_4 import Element_Uni_4
@@ -25,7 +24,7 @@ class SOE:
         self.P = P
         self.H_calc = None
 
-class Siatka:
+class Mesh:
     iter_to_print = 0
     def __init__(self, path_to_data):
         self.GlobalData = GlobalData(path_to_data)
@@ -148,6 +147,11 @@ class Siatka:
             for i in range (1, n+1):
                 t1_ver = self.calculate_t(t0_ver)
                 t0_ver = t1_ver.transpose()
+                t0_ver_reshaped = t0_ver.reshape(31,31)
+                fig, ax = plt.subplots()
+                ax.pcolor(t0_ver_reshaped)
+                plt.show()
+
                 t_file.write("{}\n\n".format(t0_ver))
                 file.write("{}:  {:.4f}, {:.4f}\n".format(self.GlobalData.dt*i, np.min(t0_ver), np.max(t0_ver)))
             t_file.close()
@@ -156,18 +160,11 @@ class Siatka:
 if __name__ == "__main__":
     if True:
         path = "D:\\DevProjects\\PythonProjects\\MES\\data\\global_data.txt"
-        s1 = Siatka(path)
-        #outside = [1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16]
+        s1 = Mesh(path)
         s1.set_bound_cond()
-        #s1.list_nodes()
         val = 1/sqrt(3)
         s1.fill_H_C_global()
         s1.simulate()
-        #powierzchnia = Surface_Uni((-1, -val), (-1, val), 1, 1 )
-        #print(powierzchnia.get_H_BC_local(s1.Nodes[1], s1.Nodes[2], 25))
-        #print(powierzchnia.get_P_local(s1.Nodes[1], s1.Nodes[2], 25, 1200))
-        from pprint import pprint as pp
-        #pp(s1.fill_H_global())
         if False:
             with open(rf"D:\DevProjects\PythonProjects\MES\data\results\h_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
                 np.savetxt(a_file, s1.fill_H_C_global()[0], fmt='%.4f')
