@@ -3,7 +3,7 @@ from math import sqrt
 
 if __name__ == "__main__":
     if True:
-        path = "D:\\DevProjects\\PythonProjects\\MES\\data\\global_data.txt"
+        path = "/src/global_data.txt"
         s1 = Mesh(path)
         s1.set_bound_cond()
         val = 1/sqrt(3)
