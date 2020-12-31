@@ -1,4 +1,7 @@
 /data/
+/data/.ipynb_checkpoints
+/data/data.zip
+/data/results
 /notatki/
 /src/.ipynb_checkpoints/
 Untitled.ipynb
