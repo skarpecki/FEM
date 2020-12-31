@@ -134,7 +134,7 @@ class Mesh:
         return t1
 
 
-    def simulate(self):
+    def simulate(self, visualize=True):
         t0_ver = np.zeros((1, len(self.Nodes)))
         for i in range(1, len(self.Nodes) + 1):
             t0_ver.itemset((0, i - 1), self.Nodes[i].t0)
@@ -147,36 +147,21 @@ class Mesh:
             for i in range (1, n+1):
                 t1_ver = self.calculate_t(t0_ver)
                 t0_ver = t1_ver.transpose()
-                t0_ver_reshaped = t0_ver.reshape(31,31)
-                fig, ax = plt.subplots()
-                ax.pcolor(t0_ver_reshaped)
-                plt.show()
-
+                if visualize:
+                    _path = rf"D:\DevProjects\PythonProjects\MES\visualization\chart_{i}.png"
+                    self.visualization(t0_ver, _path)
                 t_file.write("{}\n\n".format(t0_ver))
                 file.write("{}:  {:.4f}, {:.4f}\n".format(self.GlobalData.dt*i, np.min(t0_ver), np.max(t0_ver)))
             t_file.close()
 
-
-if __name__ == "__main__":
-    if True:
-        path = "D:\\DevProjects\\PythonProjects\\MES\\data\\global_data.txt"
-        s1 = Mesh(path)
-        s1.set_bound_cond()
-        val = 1/sqrt(3)
-        s1.fill_H_C_global()
-        s1.simulate()
-        if False:
-            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\h_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-                np.savetxt(a_file, s1.fill_H_C_global()[0], fmt='%.4f')
-
-            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\c_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-                np.savetxt(a_file, s1.fill_H_C_global()[1], fmt='%.4f')
-                #s1.fill_H_global()
-
-
-            with open(rf"D:\DevProjects\PythonProjects\MES\data\results\p_global\{s1.GlobalData.npc}npc.txt", "w") as a_file:
-                np.savetxt(a_file, s1.fill_H_C_global()[2], fmt='%.4f')
-                #s1.fill_H_global()
+    def visualization(self, t_ver, path):
+        nH = self.GlobalData.nH
+        nW = self.GlobalData.nW
+        t_ver = t_ver.reshape(nH, nW)
+        fig, ax = plt.subplots()
+        ax.pcolor(t_ver)
+        plt.savefig(path)
+        plt.close()
 
 
 
